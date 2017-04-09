@@ -1,0 +1,15 @@
+{
+  "name": "servmon_gateway",
+  "version": "1.0.0",
+  "description": "This is a sample gateway server listening to websockets requests from servmon_server",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mongodb": "^2.2.25",
+    "socket.io-client": "^1.7.3"
+  }
+}
