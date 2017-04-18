@@ -15,13 +15,25 @@ mongoClient.connect(url, function(err, _db) {
     db = _db;
 });
 
+const fs = require('fs');
 let socket = require('socket.io-client')('http://localhost:8000');
+
+/*fs.readFile('./config', (err, data) => {
+    console.log(data);
+});*/
 
 socket.on('connect', function() {
     console.log('Connected');
 });
 
 socket.on('updates', function(data) {
+
+    // Get timestamp
+    let timestamp = data.timestamp;
+    let timeObj = new Date(timestamp * 1000);
+    let hours = '0' + timeObj.getHours();
+    let minutes = '0' + timeObj.getMinutes();
+    let time = hours.substr(-2) + ':' + minutes.substr(-2);
 
     // Get raw memory data
     let memFree = data.ram.MemFree.replace(/\s+/g, '').slice(0, -2);
@@ -75,7 +87,7 @@ socket.on('updates', function(data) {
     // Get no. of cpu ticks spent working
     let workTime = Number(cpu_stat[0]) + Number(cpu_stat[1]) + Number(cpu_stat[2]);
 
-    let cpu_usage = (workTime - prev_workTime) / (totalTime - prev_totalTime) * 100 + '%';
+    let cpu_usage = ((workTime - prev_workTime) / (totalTime - prev_totalTime) * 100).toFixed(2) + '%';
 
     let p_stat = data.process[0].split(' ');
     
@@ -99,7 +111,7 @@ socket.on('updates', function(data) {
 
     let p_usage = (p_totalTime - prev_p_totalTime) / (totalTime - prev_totalTime) * 100;
 
-    console.log(data.process);
+    //console.log(data.process);
     let p_uid = data.process[1];
     let p_gid = data.process[2];
     let p_ram = data.process[3] / 1024 + "MB/" + (data.process[3] / memTotal * 100).toFixed(2) + '%' ;
@@ -111,6 +123,7 @@ socket.on('updates', function(data) {
     data = {
         cpu: cpu_usage,
         cpuData: {
+            histRec: [],
             cores: core_stat
         },
         storage: storage,
@@ -119,6 +132,7 @@ socket.on('updates', function(data) {
         },
         ram: ((memTotal - memFree) / memTotal * 100).toFixed(2) + '%',
         ramData: {
+            histRec: [],
             totalMemory: totalMemory,
             buffers: buffers,
             swapUsage: swapUsage
@@ -138,16 +152,42 @@ socket.on('updates', function(data) {
         }
     }
 
-    console.log(data);
+    //console.log(data);
 
     if (db !== null) {
-        db.collection('machine_states').insert({
-            hostname: 'localhost',
-            status: true,
-            data: data
-        }, function(err, result) {
-            console.log(result);
+        // Find last record inserted
+        db.collection('machine_states').findOne({}, {'data.cpuData.histRec': true, 'data.ramData.histRec': true}, {'sort': [['_id', 'desc']]}, (err, doc) => {
+            
+            // Keep only 24 records
+            if (typeof(doc.data.ramData.histRec) !== 'undefined' && doc.data.ramData.histRec.length > 24) {
+                data.ramData.histRec = doc.data.ramData.histRec.slice(1);
+            } else if (typeof(doc.data.ramData.histRec) !== 'undefined') {
+                data.ramData.histRec = doc.data.ramData.histRec.slice();
+            }
+            
+            data.ramData.histRec.push({ label: time, value: data.ram });
+
+            // Keep only 24 records
+            if (typeof(doc.data.cpuData.histRec) !== 'undefined' && doc.data.cpuData.histRec.length > 24) {
+                data.cpuData.histRec = doc.data.cpuData.histRec.slice(1);
+            } else if (typeof(doc.data.cpuData.histRec) !== 'undefined') {
+                data.cpuData.histRec = doc.data.cpuData.histRec.slice();
+            }
+
+            data.cpuData.histRec.push({ label: time, value: data.cpu });
+            
+            console.log(data);
+
+            // Insert the data
+            db.collection('machine_states').insert({
+                hostname: 'localhost',
+                status: true,
+                data: data
+            }, function(err, result) {
+                //console.log(result);
+            });
         });
+
     }
 
 });
