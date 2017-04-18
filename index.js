@@ -9,6 +9,8 @@ let prev_totalTime = 0;
 let prev_workTime = 0;
 let prev_p_totalTime = 0;
 
+let processName = '';
+
 mongoClient.connect(url, function(err, _db) {
     assert.equal(null, err);
     console.log('Successfully Connected');
@@ -18,15 +20,24 @@ mongoClient.connect(url, function(err, _db) {
 const fs = require('fs');
 let socket = require('socket.io-client')('http://localhost:8000');
 
-/*fs.readFile('./config', (err, data) => {
-    console.log(data);
-});*/
-
 socket.on('connect', function() {
     console.log('Connected');
+
+    fs.readFile('./config.json', 'utf8', function(err, data) {
+        processName = JSON.parse(data).processName;
+        //console.log(processName);
+        socket.emit('process_change', { processName: processName });
+    });
+
+});
+
+socket.on('disconnect', function() {
+    console.log('On disconnect');
 });
 
 socket.on('updates', function(data) {
+
+    console.log('received');
 
     // Get timestamp
     let timestamp = data.timestamp;
@@ -88,37 +99,55 @@ socket.on('updates', function(data) {
     let workTime = Number(cpu_stat[0]) + Number(cpu_stat[1]) + Number(cpu_stat[2]);
 
     let cpu_usage = ((workTime - prev_workTime) / (totalTime - prev_totalTime) * 100).toFixed(2) + '%';
+    let process = false;
 
-    let p_stat = data.process[0].split(' ');
+    let p_pid = -1;
+    let p_name = '';
+    let p_utime = 0;
+    let p_stime = 0;
+    let p_cutime = 0;
+    let p_cstime = 0;
+    let p_starttime = 0;
+    let p_totalTime = 0;
+    let p_usage = 0;
+    let p_uid = -1;
+    let p_gid = -1;
+    let p_ram = '';
+
+
+    if (data.process != false) { 
+        process = true;
+        let p_stat = data.process[0].split(' ');
     
-    // Process id 
-    let p_pid = p_stat[0];
-    // Process name
-    let p_name = p_stat[1].substring(1, p_stat[1].length - 1);
-    // CPU Time spent in user mode
-    let p_utime = p_stat[13];
-    // CPU Time spent in kernel mode
-    let p_stime = p_stat[14];
-    // Waited-for-Children time spent in user mode
-    let p_cutime = p_stat[15];
-    // Waited-for-Children time spent in kernel mode
-    let p_cstime = p_stat[16];
-    // Time when process started
-    let p_starttime = p_stat[21];
+        // Process id 
+        p_pid = p_stat[0];
+        // Process name
+        p_name = p_stat[1].substring(1, p_stat[1].length - 1);
+        // CPU Time spent in user mode
+        p_utime = p_stat[13];
+        // CPU Time spent in kernel mode
+        p_stime = p_stat[14];
+        // Waited-for-Children time spent in user mode
+        p_cutime = p_stat[15];
+        // Waited-for-Children time spent in kernel mode
+        p_cstime = p_stat[16];
+        // Time when process started
+        p_starttime = p_stat[21];
 
-    // Unit in No. of ticks 
-    let p_totalTime = Number(p_utime) + Number(p_stime);
+        // Unit in No. of ticks 
+        p_totalTime = Number(p_utime) + Number(p_stime);
 
-    let p_usage = (p_totalTime - prev_p_totalTime) / (totalTime - prev_totalTime) * 100;
+        p_usage = (p_totalTime - prev_p_totalTime) / (totalTime - prev_totalTime) * 100;
 
-    //console.log(data.process);
-    let p_uid = data.process[1];
-    let p_gid = data.process[2];
-    let p_ram = data.process[3] / 1024 + "MB/" + (data.process[3] / memTotal * 100).toFixed(2) + '%' ;
+        //console.log(data.process);
+        p_uid = data.process[1];
+        p_gid = data.process[2];
+        p_ram = data.process[3] / 1024 + "MB/" + (data.process[3] / memTotal * 100).toFixed(2) + '%' ;
 
-    prev_workTime = workTime;
-    prev_totalTime = totalTime;
-    prev_p_totalTime = p_totalTime;
+        prev_workTime = workTime;
+        prev_totalTime = totalTime;
+        prev_p_totalTime = p_totalTime;
+    }
 
     data = {
         cpu: cpu_usage,
@@ -137,8 +166,23 @@ socket.on('updates', function(data) {
             buffers: buffers,
             swapUsage: swapUsage
         },
-        process: true,
-        processData: {
+        process: process,
+        /*processData: {
+            processes: [
+                {
+                    name: p_name,
+                    pid: p_pid,
+                    uid: p_uid,
+                    gid: p_gid,
+                    cpuOccupied: p_usage,
+                    ramOccupied: p_ram
+                }
+            ]
+        }*/
+    }
+
+    if (process) {
+        data.processData = {
             processes: [
                 {
                     name: p_name,
@@ -152,7 +196,7 @@ socket.on('updates', function(data) {
         }
     }
 
-    //console.log(data);
+    console.log(data);
 
     if (db !== null) {
         // Find last record inserted
@@ -176,8 +220,6 @@ socket.on('updates', function(data) {
 
             data.cpuData.histRec.push({ label: time, value: data.cpu });
             
-            console.log(data);
-
             // Insert the data
             db.collection('machine_states').insert({
                 hostname: 'localhost',
